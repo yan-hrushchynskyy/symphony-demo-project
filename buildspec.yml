@@ -1,8 +1,8 @@
 version: 0.2
 
-env:
-  parameter-store:
-    S3_BUCKET: "demo-artifacts-bucket"
+# env:
+#   parameter-store:
+#     S3_BUCKET: "demo-artifacts-bucket"
 
 phases:
   install:

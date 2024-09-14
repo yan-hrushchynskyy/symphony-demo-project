@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  Branch:
+    Type: String
+    Description: Name of the branch
+    Default: main
+  Project:
+    Type: String
+    Description: Name of the project
+    Default: symphony-demo-project
+
+Conditions:
+  IsMaster: !Equals [!Ref 'Branch', 'main']
+
+Resources:
+  StaticWebPageLambda:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: !Join ['',['static-web-page-lambda', !If [IsMaster, '', !Ref 'Branch'] ]]
+      Handler: lambda.lambda_handler
+      CodeUri: functions/static-web-page
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.11
+      MemorySize: 128
+      Timeout: 10
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ['',['static-web-page-lambda-role', !If [IsMaster, '', !Ref 'Branch'] ]]
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        -  arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  StaticWebPageLambdaUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt StaticWebPageLambda.Arn
+      AuthType: NONE
+
+Outputs:
+  LambdaFunctionUrl:
+    Description: URL of the static web page served by the Lambda function.
+    Value: !GetAtt StaticWebPageLambdaUrl.FunctionUrl

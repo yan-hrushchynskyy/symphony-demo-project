@@ -1,0 +1,45 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+    commands:
+      # Install SAM
+      - pip install aws-sam-cli==1.95.0 Jinja2==2.11.3
+      - USER_BASE_PATH=$(python -m site --user-base)
+      - export PATH=$PATH:$USER_BASE_PATH/bin
+
+      # Install pytest and test dependencies
+      - pip install pytest moto freezegun
+  pre_build:
+    commands:
+      # Discover and run unit tests recursively for each function
+      - |
+        for d in `ls functions`;
+        do
+          ( cd functions/"$d" && pip install -r requirements.txt && pytest );
+          retVal=$?;
+          echo $retVal;
+          if [ $retVal -ne 0 ] && [ $retVal -ne 5 ]; then
+            echo 'Failure - exiting build process';
+            break -1;
+          fi
+        done
+
+  build:
+    commands:
+      # Use AWS SAM to package the application by using AWS CloudFormation
+      - sam --version
+      - sam build -t template.yml --debug
+      - sam package --template .aws-sam/build/template.yaml --s3-bucket "$S3_BUCKET_euwest1" --s3-prefix "$PROJECT_ID/builds" --output-template-file template-export.yml --region eu-west-1
+      - cd .aws-sam/build/
+      - sam package --s3-bucket "$S3_BUCKET_euwest1" --s3-prefix "$PROJECT_ID/builds" --output-template-file template-export.yml --region eu-west-1
+
+  post_build:
+    commands:
+
+artifacts:
+  type: zip
+  files:
+    - template-export.yml

@@ -5,6 +5,7 @@ def lambda_handler(event, context):
     <html>
     <head>
         <title>My Static Web Page</title>
+        <meta charset="UTF-8">
         <style>
             body {
                 font-family: Arial, sans-serif;
@@ -28,7 +29,7 @@ def lambda_handler(event, context):
     return {
         'statusCode': 200,
         'headers': {
-            'Content-Type': 'text/html'
+            'Content-Type': 'text/html; charset=utf-8'  # Ensure utf-8 encoding
         },
         'body': html_content
     }

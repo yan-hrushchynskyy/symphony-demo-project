@@ -46,6 +46,14 @@ Resources:
       TargetFunctionArn: !GetAtt StaticWebPageLambda.Arn
       AuthType: NONE
 
+  LambdaFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunctionUrl
+      FunctionName: !GetAtt StaticWebPageLambda.Arn
+      Principal: '*'
+      FunctionUrlAuthType: NONE
+
 Outputs:
   LambdaFunctionUrl:
     Description: URL of the static web page served by the Lambda function.

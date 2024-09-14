@@ -18,8 +18,9 @@ def lambda_handler(event, context):
         </style>
     </head>
     <body>
-        <h1>Welcome to My Static Web Page</h1>
+        <h1>Hello Symphonians!</h1>
         <p>This is a simple static page served by AWS Lambda.</p>
+        <p>Продам Пежо 206+ по ціні макбука. За деталями звертайтесь в ПП</p>
     </body>
     </html>
     """

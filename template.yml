@@ -15,7 +15,7 @@ Conditions:
 
 Resources:
   StaticWebPageLambda:
-    Type: AWS::Lambda::Function
+    Type: AWS::Serverless::Function
     Properties: 
       FunctionName: !Join ['',['static-web-page-lambda', !If [IsMaster, '', !Ref 'Branch'] ]]
       Handler: lambda.lambda_handler

@@ -1,5 +1,9 @@
 version: 0.2
 
+env:
+  parameter-store:
+    S3_BUCKET: "demo-artifacts-bucket"
+
 phases:
   install:
     runtime-versions:
@@ -32,9 +36,7 @@ phases:
       # Use AWS SAM to package the application by using AWS CloudFormation
       - sam --version
       - sam build -t template.yml --debug
-      - sam package --template .aws-sam/build/template.yaml --s3-bucket "$S3_BUCKET_euwest1" --s3-prefix "$PROJECT_ID/builds" --output-template-file template-export.yml --region eu-west-1
-      - cd .aws-sam/build/
-      - sam package --s3-bucket "$S3_BUCKET_euwest1" --s3-prefix "$PROJECT_ID/builds" --output-template-file template-export.yml --region eu-west-1
+      - sam package --template .aws-sam/build/template.yaml --s3-bucket "$S3_BUCKET" --s3-prefix "symphony-demo/builds" --output-template-file template-export.yml --region eu-west-1
 
   post_build:
     commands:

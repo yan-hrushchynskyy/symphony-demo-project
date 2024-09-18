@@ -4,7 +4,7 @@ def lambda_handler(event, context):
     html_content = """
     <html>
     <head>
-        <title>My Static Web Page</title>
+        <title>Static Web Page</title>
         <meta charset="UTF-8">
         <style>
             body {

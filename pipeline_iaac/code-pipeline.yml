@@ -1,0 +1,342 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deployment pipeline for test-project
+Parameters:
+  ProjectName:
+    Description: Name of the Project/Github repo
+    Type: String
+    Default: symphony-demo-project
+  TestAccount:
+    Description: AWS AccountNumber for test
+    Type: 'AWS::SSM::Parameter::Value<String>'
+    Default: TestAccount
+  ProdAccount:
+    Description: AWS AccountNumber for Prod
+    Type: 'AWS::SSM::Parameter::Value<String>'
+    Default: ProdAccount
+  GitHubSecret:
+    Description: Github secret for web hook
+    Type: String
+    Default: WebHookGeneric
+    NoEcho: true
+  CMKARN:
+    Description: ARN of the KMS CMK creates in Tools account
+    Type: 'AWS::SSM::Parameter::Value<String>'
+    Default: genericpipeline-CMKARN
+  S3Bucket:
+    Description: S3 bucket for build repository
+    Type: 'AWS::SSM::Parameter::Value<String>'
+    Default: genericpipeline-S3Bucket
+  BuildRole:
+    Description: ARN of build role
+    Type: 'AWS::SSM::Parameter::Value<String>'
+    Default: genericpipeline-BuildRole
+  PipelineRole:
+    Description: ARN of build role
+    Type: 'AWS::SSM::Parameter::Value<String>'
+    Default: genericpipeline-PipelineRole
+  Branch:
+    Description: Name of branch in repo
+    Type: String
+    Default: master
+  Username:
+    Description: Username of graphyte user (prefix to email)
+    Type: String
+    Default: '#deployments'
+  Dependency:
+    Description: Is this a dependecy
+    Type: String
+    Default: false
+  Production:
+    Description: Should go to the ProdEnvironment
+    Type: String
+    Default: false
+
+Conditions:
+  AsDependency: !Equals [!Ref Dependency,'true']
+  ProdEnvironment: !Equals [!Ref Production,'true']
+
+Resources:
+
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Description: !Sub Code Build project generated for ${ProjectName} for ${Branch}
+      ServiceRole: !Ref BuildRole
+      EncryptionKey: !Ref CMKARN
+      Environment:
+        Type: linuxContainer
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: S3_BUCKET
+            Value: !Ref S3Bucket
+          - Name: ACCOUNT_ID
+            Value: !Sub ${AWS::AccountId}
+          - Name: PARTITION
+            Value: aws
+          - Name: PROJECT_ID
+            Value: !Ref ProjectName
+          - Name: KMSKey
+            Value: !Ref CMKARN
+      Source:
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 10
+      Tags:
+        - Key: Name
+          Value: !Ref ProjectName
+      Artifacts:
+        Type: CODEPIPELINE
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !Ref PipelineRole
+      Name: !Ref AWS::StackName
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Version: 1
+                Provider: GitHub
+              Configuration:
+                Owner: graphyteai
+                Repo: !Sub ${ProjectName}
+                PollForSourceChanges: false
+                Branch: !Ref Branch
+                OAuthToken: "{{resolve:secretsmanager:OAuthToken:SecretString:OAuthToken}}"
+              OutputArtifacts:
+                - Name: SourceArtifact
+              RunOrder: 1
+        -
+          Name: Build
+          Actions:
+          -
+            Name: Build
+            ActionTypeId:
+              Category: Build
+              Owner: AWS
+              Version: 1
+              Provider: CodeBuild
+            Configuration:
+              ProjectName: !Ref BuildProject
+            RunOrder: 1
+            InputArtifacts:
+              - Name: SourceArtifact
+            OutputArtifacts:
+              - Name: BuildOutput
+        - Name: !If
+            - ProdEnvironment
+            - DeployToTest
+            - DeployToTools
+          Actions:
+            - Name: CreateChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              Configuration:
+                ChangeSetName: !Sub '${ProjectName}-pipeline-${Branch}-changeset'
+                ActionMode: CHANGE_SET_REPLACE
+                StackName: !If
+                  - ProdEnvironment
+                  - !Sub '${ProjectName}-stack'
+                  - !If
+                    - AsDependency
+                    - !Sub '${ProjectName}-stack'
+                    - !Sub '${ProjectName}-stack-${Branch}'
+                Capabilities: CAPABILITY_NAMED_IAM
+                TemplatePath: BuildOutput::template-export.yml
+                RoleArn: !If
+                  - ProdEnvironment
+                  - !Sub 'arn:aws:iam::${TestAccount}:role/genericpipeline-cfdeployerrole'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/genericpipeline-cfdeployerrole'
+                ParameterOverrides: !Sub |
+                  {
+                    "Branch": "${Branch}"
+                  }
+              InputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 1
+              RoleArn: !If
+                - ProdEnvironment
+                - !Sub 'arn:aws:iam::${TestAccount}:role/genericpipeline-toolsacctcodepipelinecfrole'
+                - !Sub 'arn:aws:iam::${AWS::AccountId}:role/genericpipeline-toolsacctcodepipelinecfrole'
+            - Name: DeployChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              Configuration:
+                ChangeSetName: !Sub '${ProjectName}-pipeline-${Branch}-changeset'
+                ActionMode: CHANGE_SET_EXECUTE
+                StackName: !If
+                  - ProdEnvironment
+                  - !Sub '${ProjectName}-stack'
+                  - !If
+                    - AsDependency
+                    - !Sub '${ProjectName}-stack'
+                    - !Sub '${ProjectName}-stack-${Branch}'
+                RoleArn: !If
+                   - ProdEnvironment
+                   - !Sub 'arn:aws:iam::${TestAccount}:role/genericpipeline-toolsacctcodepipelinecfrole'
+                   - !Sub 'arn:aws:iam::${AWS::AccountId}:role/genericpipeline-toolsacctcodepipelinecfrole'
+              InputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 2
+              RoleArn: !If
+                   - ProdEnvironment
+                   - !Sub 'arn:aws:iam::${TestAccount}:role/genericpipeline-toolsacctcodepipelinecfrole'
+                   - !Sub 'arn:aws:iam::${AWS::AccountId}:role/genericpipeline-toolsacctcodepipelinecfrole'
+        - !If
+          - ProdEnvironment
+          -
+            Name: Approval
+            Actions:
+              - Name: ManualApproval
+                ActionTypeId:
+                  Category: Approval
+                  Owner: AWS
+                  Version: 1
+                  Provider: Manual
+                Configuration:
+                  NotificationArn: !ImportValue 'CFGenericPipelinePreRecs-SNSTopic'
+                  CustomData: Please approve deployment to Production in the console
+                RunOrder: 1
+          - !Ref AWS::NoValue
+        - !If
+          - ProdEnvironment
+          -
+            Name: DeployToProd
+            Actions:
+              - Name: CreateChangeSetProd
+                ActionTypeId:
+                  Category: Deploy
+                  Owner: AWS
+                  Version: 1
+                  Provider: CloudFormation
+                Configuration:
+                  ChangeSetName: !Sub '${ProjectName}-pipeline-changeset'
+                  ActionMode: CHANGE_SET_REPLACE
+                  StackName: !If
+                    - ProdEnvironment
+                    - !Sub '${ProjectName}-stack'
+                    - !Sub '${ProjectName}-stack-${Branch}'
+                  Capabilities: CAPABILITY_NAMED_IAM
+                  TemplatePath: BuildOutput::template-export.yml
+                  RoleArn: !Sub 'arn:aws:iam::${ProdAccount}:role/genericpipeline-cfdeployerrole'
+                  ParameterOverrides: !Sub |
+                    {
+                      "Branch": "${Branch}"
+                    }
+                InputArtifacts:
+                  - Name: BuildOutput
+                RunOrder: 1
+                RoleArn: !Sub 'arn:aws:iam::${ProdAccount}:role/genericpipeline-toolsacctcodepipelinecfrole'
+              - Name: DeployChangeSetProd
+                ActionTypeId:
+                  Category: Deploy
+                  Owner: AWS
+                  Version: 1
+                  Provider: CloudFormation
+                Configuration:
+                  ChangeSetName: !Sub '${ProjectName}-pipeline-changeset'
+                  ActionMode: CHANGE_SET_EXECUTE
+                  StackName: !If
+                    - ProdEnvironment
+                    - !Sub '${ProjectName}-stack'
+                    - !Sub '${ProjectName}-stack-${Branch}'
+                  RoleArn: !Sub 'arn:aws:iam::${ProdAccount}:role/genericpipeline-cfdeployerrole'
+                InputArtifacts:
+                  - Name: BuildOutput
+                RunOrder: 2
+                RoleArn: !Sub 'arn:aws:iam::${ProdAccount}:role/genericpipeline-toolsacctcodepipelinecfrole'
+              -
+                Name: TagGitHub
+                ActionTypeId:
+                  Category: Build
+                  Owner: AWS
+                  Version: 1
+                  Provider: CodeBuild
+                Configuration:
+                  ProjectName: !ImportValue 'CFGenericPipelinePreRecs-BuildTagProject'
+                RunOrder: 4
+                InputArtifacts:
+                  - Name: SourceArtifact
+                OutputArtifacts:
+                  - Name: ExportOutput
+          - !Ref AWS::NoValue
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3Bucket
+        EncryptionKey:
+          Id: !Ref CMKARN
+          Type: KMS
+
+  AppPipelineWebhook:
+    Type: AWS::CodePipeline::Webhook
+    Properties:
+      Authentication: GITHUB_HMAC
+      AuthenticationConfiguration:
+        SecretToken: !Ref GitHubSecret
+      Filters:
+        -
+          JsonPath: "$.ref"
+          MatchEquals: refs/heads/{Branch}
+      TargetPipeline: !Ref Pipeline
+      TargetAction: Source
+      TargetPipelineVersion: !GetAtt Pipeline.Version
+      RegisterWithThirdParty: true
+
+  # Add CloudWatch events rule to integrate notifications to Slack
+  # CWEventPipelineRule:
+  #   #Condition: ProdEnvironment
+  #   Type: AWS::Events::Rule
+  #   Properties:
+  #     Description: !Sub "${ProjectName} CodePipeline Pipeline Events for branch ${Branch}"
+  #     EventPattern:
+  #       source:
+  #         - aws.codepipeline
+  #       detail-type:
+  #         - "CodePipeline Pipeline Execution State Change"
+  #       detail:
+  #         pipeline:
+  #           - !Ref Pipeline
+  #     State: "ENABLED"
+  #     Targets:
+  #       -
+  #         Arn: !ImportValue 'CFGenericPipelinePreRecs-SNSTopic'
+  #         Id: "DeploymentsTopic"
+  #         InputTransformer:
+  #           InputPathsMap:
+  #             cf-event: '$'
+  #           InputTemplate: !Sub '{"cf-event": <cf-event>, "username": "${Username}", "branch": "${Branch}"}'
+
+  # CWEventStageRule:
+  #   Type: AWS::Events::Rule
+  #   #Condition: ProdEnvironment
+  #   Properties:
+  #     Description: !Sub "${ProjectName} CodePipeline Stage Events"
+  #     EventPattern:
+  #       source:
+  #         - aws.codepipeline
+  #       detail-type:
+  #         - "CodePipeline Action Execution State Change"
+  #       detail:
+  #         pipeline:
+  #           - !Ref Pipeline
+  #         state:
+  #           - "FAILED"
+  #     State: "ENABLED"
+  #     Targets:
+  #       -
+  #         Arn: !ImportValue 'CFGenericPipelinePreRecs-SNSTopic'
+  #         Id: "DeploymentsTopic"
+  #         InputTransformer:
+  #           InputPathsMap:
+  #             cf-event: '$'
+  #           InputTemplate: !Sub '{"cf-event": <cf-event>, "username": "${Username}", "branch": "${Branch}"}'
